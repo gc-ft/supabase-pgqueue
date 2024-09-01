@@ -1,0 +1,5 @@
+PGQueue (for Supabase)
+Copyright 2024 Fabian Thylmann.
+
+The idea behind PGQueue comes from supa_queue by
+Rodrigo Mansueli (https://github.com/mansueli/supa_queue).
