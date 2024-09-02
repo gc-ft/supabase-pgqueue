@@ -696,7 +696,7 @@ DECLARE
     _full_url TEXT;
     _full_headers JSONB;
 BEGIN
-    _timeout := 10000;
+    _timeout := 2000;
 
     -- If _url starts with / then we just have a path and use the _base_url
     -- This means the system assumes we are calling a supabase edge function!
