@@ -779,7 +779,6 @@ DECLARE
     _signing_alg pgqueue.signing_algs := 'sha256';
     _signing_enc pgqueue.signing_encs := 'hex';
     _payload JSONB;
-    _final_headers JSONB;
 BEGIN
     -- Retrieve the function arguments via TG_NARGS and TG_ARGV
     IF TG_NARGS >= 1 THEN
@@ -866,7 +865,7 @@ BEGIN
         'POST',
         _jwt,
         _payload,
-        _final_headers,
+        _headers,
         _signing_secret,
         _signing_vault,
         _signing_header,
