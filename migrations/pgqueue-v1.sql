@@ -111,9 +111,9 @@ end;
 $$;
 
 --
--- Execute process_executed_requests function if there are available workers
+-- Execute process_job_results function if there are available workers
 --
-CREATE OR REPLACE FUNCTION pgqueue.process_executed_requests_if_unlocked()
+CREATE OR REPLACE FUNCTION pgqueue.process_job_results_if_unlocked()
 RETURNS VOID
 SECURITY DEFINER
 SET search_path = ''
@@ -128,7 +128,7 @@ BEGIN
         -- Lock the worker (this is already done by the SELECT ... FOR UPDATE)
 
         -- Process executed requests
-        PERFORM pgqueue.process_executed_requests();
+        PERFORM pgqueue.process_job_results();
 
         -- Unlock the worker
         UPDATE pgqueue.workers SET locked = FALSE WHERE id = _worker.id;
@@ -142,7 +142,7 @@ $$ LANGUAGE plpgsql;
 -- Loop through records in executed_requests and get response from pg_net
 -- Adds logging into failed_log
 --
-CREATE OR REPLACE FUNCTION pgqueue.process_executed_requests()
+CREATE OR REPLACE FUNCTION pgqueue.process_job_results()
 RETURNS VOID
 SECURITY DEFINER
 SET search_path = ''
@@ -181,6 +181,8 @@ BEGIN
             UPDATE pgqueue.job_queue
             SET job_status = 'failed',
                 last_at = now(),
+                response_status = 0,
+                response_content = _response_result.message,
                 retry_count = retry_count + 1,
                 run_at = now() + 
                     INTERVAL '1 second' * 
@@ -454,7 +456,7 @@ $$ LANGUAGE plpgsql;
 -- Sice it is a BEFORE trigger, it returns modified NEW with the correct
 -- data based on the processing it did.
 --
-CREATE OR REPLACE FUNCTION pgqueue.process_job()
+CREATE OR REPLACE FUNCTION pgqueue.process_new_job()
 RETURNS TRIGGER
 SECURITY DEFINER
 SET search_path = ''
@@ -558,15 +560,15 @@ END;
 $$ LANGUAGE plpgsql;
 
 -- Add the trigger to the queue table:
-CREATE TRIGGER process_job_trigger
+CREATE TRIGGER process_new_job_trigger
 BEFORE INSERT ON pgqueue.job_queue
 FOR EACH ROW
-EXECUTE FUNCTION pgqueue.process_job();
+EXECUTE FUNCTION pgqueue.process_new_job();
 
 --
--- Run jobs flagged as failed OR new, keeping account for run_at field!
+-- Process jobs flagged as failed OR new, keeping account for run_at field!
 --
-CREATE OR REPLACE FUNCTION pgqueue.run_scheduled_jobs()
+CREATE OR REPLACE FUNCTION pgqueue.process_scheduled_jobs()
 RETURNS void
 SECURITY DEFINER
 SET search_path TO ''
@@ -584,7 +586,7 @@ BEGIN
 
     -- Look for all jobs either failed or new with a low enough retry_count and run_at
     FOR _r IN (
-            SELECT job_id, job_type, url, job_jwt, payload, headers FROM pgqueue.job_queue
+            SELECT job_id, job_type, url, job_jwt, payload, headers, retry_count FROM pgqueue.job_queue
             WHERE (
                 (job_status = 'new') OR
                 (job_status = 'failed' AND retry_count <= retry_limit)
@@ -645,15 +647,28 @@ BEGIN
                 UPDATE pgqueue.job_queue
                     SET job_status = 'too_many',
                         last_at = NOW(),
-                        retry_count = retry_count + 1
+                        retry_count = retry_count + 1,
+                        response_status = 0,
+                        response_content = SQLERRM
                     WHERE job_id = _r.job_id;
             ELSE
                 UPDATE pgqueue.job_queue
                     SET job_status = 'failed',
                         last_at = NOW(),
-                        retry_count = retry_count + 1
+                        retry_count = retry_count + 1,
+                        run_at = now() + 
+                            INTERVAL '1 second' * 
+                            ROUND((POWER(2, retry_count) * (10-(retry_count/1.5)))/2),
+                        response_status = 0,
+                        response_content = SQLERRM
                     WHERE job_id = _r.job_id;
             END IF;
+
+            -- Log the error in our failed_log too
+            INSERT INTO pgqueue.failed_log
+                (job_id, job_run, response_status, response_content)
+            VALUES
+                (_r.job_id, _r.retry_count+1, 0, SQLERRM);
         END;
     END LOOP;
 END;
@@ -838,24 +853,25 @@ $$ LANGUAGE plpgsql;
 --
 -- Helper function to use in pg_cron to process tasks every 20 seconds
 --
-CREATE OR REPLACE FUNCTION pgqueue.process_tasks_subminute()
+CREATE OR REPLACE FUNCTION pgqueue.process_job_results_subminute()
 RETURNS void
 SECURITY DEFINER
 SET search_path TO ''
 AS $$
 BEGIN
   -- Call process_tasks() with 20 seconds between each call
-  PERFORM pgqueue.process_executed_requests_if_unlocked();
+  PERFORM pgqueue.process_job_results_if_unlocked();
   PERFORM pg_sleep(20);
-  PERFORM pgqueue.process_executed_requests_if_unlocked();
+  PERFORM pgqueue.process_job_results_if_unlocked();
   PERFORM pg_sleep(20);
-  PERFORM pgqueue.process_executed_requests_if_unlocked();
+  PERFORM pgqueue.process_job_results_if_unlocked();
 END;
 $$ LANGUAGE plpgsql;
 
 ALTER TABLE pgqueue.executed_requests ENABLE ROW LEVEL SECURITY;
 ALTER TABLE pgqueue.job_queue ENABLE ROW LEVEL SECURITY;
 ALTER TABLE pgqueue.workers ENABLE ROW LEVEL SECURITY;
+ALTER TABLE pgqueue.failed_log ENABLE ROW LEVEL SECURITY;
 
 grant all on schema pgqueue to postgres;
 grant all on all tables in schema pgqueue to postgres;
