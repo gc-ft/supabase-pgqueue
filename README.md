@@ -335,7 +335,7 @@ AFTER INSERT ON my_table
 FOR EACH ROW
 EXECUTE FUNCTION pgqueue.trigger_webhook(
     'https://webhook.site/your-webhook-url',
-    NULL, -- headers, not used
+    '{}', -- headers, not used
     NULL, -- jwt, not used
     NULL, -- signing_secret, not used
     'hmac_secret' -- signing_vault
