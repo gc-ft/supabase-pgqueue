@@ -86,7 +86,7 @@ The idea behind PGQueue comes from [supa_queue](https://github.com/mansueli/supa
     SELECT cron.schedule(
         'pgqueue.process_scheduled_jobs',
         '* * * * *',
-        $$ SELECT pgqueue.run_scheduled_jobs(); $$
+        $$ SELECT pgqueue.process_scheduled_jobs(); $$
     );
     -- Process job results 3 times per minute:
     SELECT cron.schedule(
@@ -273,7 +273,7 @@ Each job in the `pgqueue.job_queue` table goes through various statuses during i
 
 - **completed**: The job has successfully completed its task. This status is assigned when the job receives a 2xx HTTP status code, or when specific conditions indicate that the job has been completed successfully.
 
-- **redirected**: The job has completed with a 201 HTTP status code, indicating a new job to process. The response fields, are set and a new job is generated. This status should be treated as **completed** and is just present to inform that a new job was created due to this job.
+- **redirected**: The job has completed with a 210 HTTP status code, indicating a new job to process. The response fields, are set and a new job is generated. This status should be treated as **completed** and is just present to inform that a new job was created due to this job.
 
 - **server_error**: The job failed due to a 500-level server error. Jobs with this status will not be retried, as the error is assumed to be a non-recoverable server issue.
 

@@ -150,6 +150,7 @@ AS $$
 DECLARE
     _executed_request RECORD;
     _response_result RECORD;
+    _retry_after_value TEXT;
     _retry_after_seconds INTEGER default 600; -- default 10 minutes from now
     _elem jsonb;
     _new_job_url text;
@@ -196,8 +197,8 @@ BEGIN
             VALUES
                 (_executed_request.job_id, _retry, 0, _response_result.message);
         ELSIF _response_result.status = 'SUCCESS'
-            AND _response_result.status_code = 201 THEN
-            -- 201 CREATED header we "misuse" to tell us the response
+            AND _response_result.status_code = 210 THEN
+            -- 210 header we "misuse" to tell us the response
             -- represents a NEW job to put in our queue!
             RAISE LOG 'Job completed with new job request (job_id: %)', _executed_request.job_id;
 
@@ -216,7 +217,7 @@ BEGIN
                 _new_job_payload = _elem->payload;
             END IF;
             
-            _new_job_headers := null;
+            _new_job_headers := '{}'::JSONB;
             IF _elem ? 'headers' THEN
                 _new_job_headers = _elem->headers;
             END IF;
@@ -268,24 +269,21 @@ BEGIN
             WHERE job_id = _executed_request.job_id;
         ELSIF _response_result.status = 'SUCCESS' 
             AND _response_result.status_code = 429 THEN
-            -- Error 429 means we need to slow down, the header Retry-After should
+            -- Error 429 means we need to slow down, the header retry-after should
             -- tell us when we can try again, so mark the job id with that time
             -- for earliest retry
             RAISE NOTICE 'Job returned error 429 Too Many Requests (job_id: %)', executed_request.job_id;
 
-            -- find first Retry-After in headers
-            FOR _elem IN
-                SELECT * FROM jsonb_array_elements(_response_result.headers)
-            LOOP
-                -- Look for Retry-After
-                IF _elem ? 'Retry-After' THEN
-                    -- Extract and store
-                    _retry_after_seconds := (_elem->>'Retry-After')::INTEGER;
-                    EXIT;
-                END IF;
-            END LOOP;
+            -- find first retry-after in headers, case in-sensetive
+            IF EXISTS (
+                SELECT value INTO _retry_after_value
+                    FROM jsonb_each_text(_response_result.headers) 
+                    WHERE LOWER(key) = 'retry-after'
+            ) THEN
+                _retry_after_seconds := COALESCE(_retry_after_value::INTEGER, 600);
+            END IF;
 
-            -- set run_at to now() + Retry-After seconds
+            -- set run_at to now() + retry-after seconds
             UPDATE pgqueue.job_queue
                 SET job_status = 'failed',
                     last_at = now(),
@@ -302,8 +300,8 @@ BEGIN
 
             IF EXISTS (
                 SELECT 1
-                    FROM jsonb_array_elements(_response_result.headers) AS elem
-                    WHERE elem ? 'x-job-finished'
+                FROM jsonb_each_text(_response_result.headers)
+                WHERE LOWER(key) = 'x-job-finished'
             ) THEN
                 UPDATE pgqueue.job_queue
                 SET job_status = 'completed',
@@ -488,18 +486,18 @@ BEGIN
     END IF;
 
     -- check if job_jwt is from_session and if so get the right jwt
-    IF NEW._jwt = 'from_session' THEN
+    IF NEW.job_jwt = 'from_session' THEN
         -- Get the JWT from the Authorization header in the request
-        NEW._jwt := current_setting('request.headers', true)::json->>'authorization';
+        NEW.job_jwt := current_setting('request.headers', true)::json->>'authorization';
 
         -- Verify that the Authorization header was found
-        IF NEW._jwt IS NULL THEN
+        IF NEW.job_jwt IS NULL THEN
             RAISE EXCEPTION 'Authorization header not found in the request but jwt set to from_session!';
         END IF;
         
         -- Remove 'Bearer ' prefix if it exists
-        IF LEFT(NEW._jwt, 7) = 'Bearer ' THEN
-            NEW._jwt := substr(NEW._jwt, 8);
+        IF LEFT(NEW.job_jwt, 7) = 'Bearer ' THEN
+            NEW.job_jwt := substr(NEW.job_jwt, 8);
         END IF;
     END IF;
 
