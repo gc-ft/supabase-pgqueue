@@ -190,23 +190,25 @@ Use the `pgqueue.trigger_webhook` function as the trigger function in `CREATE TR
 
 #### Function Parameters:
 
-- **_url (TEXT)**: The URL to which the webhook should be sent. This is the only required parameter. It conforms to the same rules as the url field in the job_queue table! (See [above](#job-queue-structure))
+Since a `TRIGGER` function can not have named arguments, note that optional arguments can not be skipped if a later argument is to be used and named arguments can not be used in calling the function!
 
-- **_headers (JSONB)** (optional): Optional JSON object containing additional headers to be included in the webhook request. Common headers such as `Content-Type` and `Authorization` can be set here.
+1. **url (TEXT)**: The URL to which the webhook should be sent. This is the only required parameter. It conforms to the same rules as the url field in the job_queue table! (See [above](#job-queue-structure))
 
-- **_jwt (TEXT)** (optional): JWT token to be used for authorization in case of an Supabase Edge Function. If set to `'from_session'`, the function will copy the `Authorization` header from the current PostgREST session.
+2. **headers (JSONB)** (optional): Optional JSON object containing additional headers to be included in the webhook request. Common headers such as `Content-Type` and `Authorization` can be set here.
 
-- **_signing_secret (BYTEA)** (optional): Optional secret key for signing the webhook request. If provided, an HMAC signature will be generated. (See [Request Signing](#request-signing))
+3. **jwt (TEXT)** (optional): JWT token to be used for authorization in case of an Supabase Edge Function. If set to `'from_session'`, the function will copy the `Authorization` header from the current PostgREST session.
 
-- **_signing_vault (TEXT)** (optional): Optional reference to a vault entry containing the signing secret. If provided, the secret will be retrieved from the vault and used to sign the request. (See [Request Signing](#request-signing))
+4. **signing_secret (BYTEA)** (optional): Optional secret key for signing the webhook request. If provided, an HMAC signature will be generated. (See [Request Signing](#request-signing))
 
-- **_signing_header (TEXT)** (optional): The name of the header that will contain the HMAC signature. Defaults to `X-HMAC-Signature`. (See [Request Signing](#request-signing))
+5. **signing_vault (TEXT)** (optional): Optional reference to a vault entry containing the signing secret. If provided, the secret will be retrieved from the vault and used to sign the request. (See [Request Signing](#request-signing))
 
-- **_signing_style (enum)** (optional): The style of the HMAC signature, either `HMAC` or `HMAC_WITH_PREFIX`. (See [Request Signing](#request-signing))
+6. **signing_header (TEXT)** (optional): The name of the header that will contain the HMAC signature. Defaults to `X-HMAC-Signature`. (See [Request Signing](#request-signing))
 
-- **_signing_alg (enum)** (optional, default: `sha256`): The algorithm used for the HMAC signature. (See [Request Signing](#request-signing))
+7. **signing_style (enum)** (optional): The style of the HMAC signature, either `HMAC` or `HMAC_WITH_PREFIX`. (See [Request Signing](#request-signing))
 
-- **_signing_enc (enum)** (optional, default `hex`): The encoding of the final signature, either `hex` or `base64`. (See [Request Signing](#request-signing))
+8. **signing_alg (enum)** (optional, default: `sha256`): The algorithm used for the HMAC signature. (See [Request Signing](#request-signing))
+
+9. **signing_enc (enum)** (optional, default `hex`): The encoding of the final signature, either `hex` or `base64`. (See [Request Signing](#request-signing))
 
 #### Generated Payload
 
@@ -230,13 +232,16 @@ CREATE TRIGGER after_insert_trigger
 AFTER INSERT ON my_table
 FOR EACH ROW
 EXECUTE FUNCTION pgqueue.trigger_webhook(
-    _url := 'https://webhook.site/your-webhook-url',
-    _headers := '{"X-Webhook-Event": "new_record"}'::jsonb,
-    _signing_secret := 'my-secret-key'::bytea
+    'https://webhook.site/your-webhook-url',
+    '{"X-Webhook-Event": "new_record"}'::jsonb,
+    NULL, -- jwt, not used
+    'my-secret-key'::bytea, -- signing_secret
+    NULL, -- signing_vault, not used
+    'X-Webhook-Signature' -- signing_header
 );
 ```
 
-In this example, whenever a new row is inserted into `my_table`, a webhook will be sent to `https://webhook.site/your-webhook-url` with the event details. The webhook request will include the customer HTTP Header `X-Webhook-Event` and a generated HMAC signature (in HTTP Header `X-HMAC-Signature`) based on the provided secret key and the trigger payload.
+In this example, whenever a new row is inserted into `my_table`, a webhook will be sent to `https://webhook.site/your-webhook-url` with the event details. The webhook request will include the customer HTTP Header `X-Webhook-Event` and a generated HMAC signature (in HTTP Header `X-Webhook-Signature`) based on the provided secret key and the trigger payload.
 
 #### Example 2:
 
@@ -245,7 +250,7 @@ CREATE TRIGGER after_update_trigger
 AFTER UPDATE ON my_table
 FOR EACH ROW
 EXECUTE FUNCTION pgqueue.trigger_webhook(
-    _url := '/my_edge_function'
+    '/my_edge_function'
 );
 ```
 
@@ -329,8 +334,11 @@ CREATE TRIGGER after_insert_trigger
 AFTER INSERT ON my_table
 FOR EACH ROW
 EXECUTE FUNCTION pgqueue.trigger_webhook(
-    _url := 'https://webhook.site/your-webhook-url',
-    _signing_vault := 'hmac_secret'
+    'https://webhook.site/your-webhook-url',
+    NULL, -- headers, not used
+    NULL, -- jwt, not used
+    NULL, -- signing_secret, not used
+    'hmac_secret' -- signing_vault
 );
 ```
 
