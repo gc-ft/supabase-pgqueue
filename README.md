@@ -30,6 +30,9 @@ The idea behind PGQueue comes from [supa_queue](https://github.com/mansueli/supa
 1. [Features Overview](#features)
 2. [Installation](#installation)
 3. [Configuration](#configuration)
+   - [Vault Setup](#vault-setup)
+   - [Security](#security)
+   - [Disabling `FUNC`](#disabling-func-jobs)
 4. [Usage](#usage)
    - [Job Queue Structure](#job-queue-structure)
    - [Job Lifecycle](#job-lifecycle)
@@ -78,18 +81,18 @@ The idea behind PGQueue comes from [supa_queue](https://github.com/mansueli/supa
 
 3. To add cron entries that run the needed functions use the below SQL in the SQL Editor:
 
-    ```
-    -- Look for jobs each minute
+    ```sql
+    -- Look for scheduled jobs each minute
     SELECT cron.schedule(
-        'pgqueue.run_scheduled_jobs',
+        'pgqueue.process_scheduled_jobs',
         '* * * * *',
         $$ SELECT pgqueue.run_scheduled_jobs(); $$
     );
-    -- Schedule process jobs 3 times per minute:
+    -- Process job results 3 times per minute:
     SELECT cron.schedule(
-        'pgqueue.process_tasks_subminute',
+        'pgqueue.process_job_results_subminute',
         '* * * * *',
-        $$ SELECT pgqueue.process_tasks_subminute(); $$
+        $$ SELECT pgqueue.process_job_results_subminute(); $$
     );
     ```
 
@@ -106,6 +109,33 @@ Set this to your Supabase service_role key, if you want to use service_role
 keys for some jobs executing edge functions.
 - _**signing keys**_:
 If you want to use the Signature Header generation feature of `pgqueue` and use `signing_vault` setting in a job, set any `signing_vault` variables to the corresponding secret for the signature.
+
+### Security
+
+The tables used by PGQueue have RLS enabled by default and all tables and functions are kept in a separate schema called `pgqueue`. This schema should not be exposed to your Supabase REST API! All functions are `SECURITY DEFINER` functions, meaning when run they have full access to the tables they use. If you use `FUNC` job types, remember that also these functions will be executed using the same permissions!
+
+If you plan to use `from_session` for Edge Function job JWTs the jobs in question need to be inserted during a PostgREST session. The safest way possible to do so is to insert jobs only via pre-defined Postgres functions in a schema exposed to the Supabase REST API. This would also require a policy to be added to `pgqueue.job_queue` that allows INSERTs from authenticated users.
+
+_Remember:_ Only Edge Function jobs use the JWT! These are defined as jobs entered with a leading `/` with the name of the Edge Function afterwards! 
+
+#### Example Policy
+
+```sql
+CREATE POLICY "Create new jobs for any authenticated user" on "pgqueue"."job_queue"
+as permissive for insert to authenticated using (true) with check (true);
+```
+
+Keep in mind that you want the Postgres function that creates a job to only do so if really needed, and it should be written in a way where it can not be misused by anyone.
+
+When the function that inserts a new job is run through PostgREST, the `INSERT` will `TRIGGER` `pgqueue.process_new_job` while the PostgREST session is running and therefor `pgqueue.process_new_job` will have access to the `request.headers` variable from PostgREST and can fetch the `Authorization` header from it. The same JWT will then be used for the Edge Function job JWT, keeping RLS rules in tact for the Edge Function call as long as the Edge Function uses the `Authorization` header and `Anon` key to create it's Supabase Client.
+
+#### Further securing through Signature
+
+In order to further secure the Edge Function job you can always use the [Signature system](#request-signing) offered by PGQueue. 
+
+### Disabling `FUNC` jobs
+
+In case `FUNC` jobs are not needed for you and you would like to disable them, the easiest way to do so is to remove `FUNC` from the `pgqueue.job_type` enum.
 
 
 ## Usage
