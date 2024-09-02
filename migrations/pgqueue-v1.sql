@@ -862,7 +862,7 @@ BEGIN
         signing_header,
         signing_style,
         signing_alg,
-        signing_enc,
+        signing_enc
     ) VALUES (
         _url,
         'POST',
@@ -874,7 +874,7 @@ BEGIN
         _signing_header,
         _signing_style,
         _signing_alg,
-        _signing_enc,
+        _signing_enc
     );
 
     -- RETURN OLD on DELETE triggers and NEW on any other trigger.
