@@ -637,40 +637,38 @@ BEGIN
             INSERT INTO pgqueue.executed_requests (request_id, job_id)
             VALUES (_request_id, _r.job_id);
         END IF;
-
-    -- Just in case we have an exception somewhere, log it and fail the job
-    EXCEPTION
-        WHEN OTHERS THEN
-            RAISE LOG 'Error processing job_id: %', _r.job_id;
-            -- Handle failure and potentially retry or mark as too_many retries
-            IF _r.retry_count + 1 > _r.retry_limit THEN
-                UPDATE pgqueue.job_queue
-                    SET job_status = 'too_many',
-                        last_at = NOW(),
-                        retry_count = retry_count + 1,
-                        response_status = 0,
-                        response_content = SQLERRM
-                    WHERE job_id = _r.job_id;
-            ELSE
-                UPDATE pgqueue.job_queue
-                    SET job_status = 'failed',
-                        last_at = NOW(),
-                        retry_count = retry_count + 1,
-                        run_at = now() + 
-                            INTERVAL '1 second' * 
-                            ROUND((POWER(2, retry_count) * (10-(retry_count/1.5)))/2),
-                        response_status = 0,
-                        response_content = SQLERRM
-                    WHERE job_id = _r.job_id;
-            END IF;
-
-            -- Log the error in our failed_log too
-            INSERT INTO pgqueue.failed_log
-                (job_id, job_run, response_status, response_content)
-            VALUES
-                (_r.job_id, _r.retry_count+1, 0, SQLERRM);
-        END;
     END LOOP;
+-- Just in case we have an exception somewhere, log it and fail the job
+EXCEPTION
+    WHEN OTHERS THEN
+        RAISE LOG 'Error processing job_id: %', _r.job_id;
+        -- Handle failure and potentially retry or mark as too_many retries
+        IF _r.retry_count + 1 > _r.retry_limit THEN
+            UPDATE pgqueue.job_queue
+                SET job_status = 'too_many',
+                    last_at = NOW(),
+                    retry_count = retry_count + 1,
+                    response_status = 0,
+                    response_content = SQLERRM
+                WHERE job_id = _r.job_id;
+        ELSE
+            UPDATE pgqueue.job_queue
+                SET job_status = 'failed',
+                    last_at = NOW(),
+                    retry_count = retry_count + 1,
+                    run_at = now() + 
+                        INTERVAL '1 second' * 
+                        ROUND((POWER(2, retry_count) * (10-(retry_count/1.5)))/2),
+                    response_status = 0,
+                    response_content = SQLERRM
+                WHERE job_id = _r.job_id;
+        END IF;
+
+        -- Log the error in our failed_log too
+        INSERT INTO pgqueue.failed_log
+            (job_id, job_run, response_status, response_content)
+        VALUES
+            (_r.job_id, _r.retry_count+1, 0, SQLERRM);
 END;
 $$ LANGUAGE plpgsql;
 
@@ -767,25 +765,63 @@ $$ LANGUAGE plpgsql;
 -- Helper function to use pgqueue to trigger webhooks from
 -- postgresql triggers. Always uses POST!
 --
-CREATE OR REPLACE FUNCTION pgqueue.trigger_webhook(
-    _url TEXT,
-    _headers JSONB DEFAULT '{}',
-    _jwt TEXT DEFAULT NULL,
-    _signing_secret BYTEA DEFAULT NULL,
-    _signing_vault TEXT DEFAULT NULL,
-    _signing_header TEXT DEFAULT NULL,
-    _signing_style pgqueue.signing_styles DEFAULT NULL,
-    _signing_alg pgqueue.signing_algs DEFAULT 'sha256',
-    _signing_enc pgqueue.signing_encs DEFAULT 'hex'
-)
+CREATE OR REPLACE FUNCTION pgqueue.trigger_webhook()
 RETURNS TRIGGER
 SECURITY DEFINER
 SET search_path = ''
 AS $$
 DECLARE
+    _url TEXT;
+    _headers JSONB := '{}';
+    _jwt TEXT := NULL;
+    _signing_secret BYTEA := NULL;
+    _signing_vault TEXT := NULL;
+    _signing_header TEXT := NULL;
+    _signing_style pgqueue.signing_styles := NULL;
+    _signing_alg pgqueue.signing_algs := 'sha256';
+    _signing_enc pgqueue.signing_encs := 'hex';
     _payload JSONB;
     _final_headers JSONB;
 BEGIN
+    -- Retrieve the function arguments via TG_NARGS and TG_ARGV
+    IF TG_NARGS >= 1 THEN
+        _url := TG_ARGV[0];
+    ELSE
+        RAISE EXCEPTION 'URL argument is required';
+    END IF;
+
+    IF TG_NARGS >= 2 THEN
+        _headers := TG_ARGV[1]::jsonb;
+    END IF;
+
+    IF TG_NARGS >= 3 THEN
+        _jwt := TG_ARGV[2];
+    END IF;
+
+    IF TG_NARGS >= 4 THEN
+        _signing_secret := TG_ARGV[3]::bytea;
+    END IF;
+
+    IF TG_NARGS >= 5 THEN
+        _signing_vault := TG_ARGV[4];
+    END IF;
+
+    IF TG_NARGS >= 6 THEN
+        _signing_header := TG_ARGV[5];
+    END IF;
+
+    IF TG_NARGS >= 7 THEN
+        _signing_style := TG_ARGV[6]::pgqueue.signing_styles;
+    END IF;
+
+    IF TG_NARGS >= 8 THEN
+        _signing_alg := TG_ARGV[7]::pgqueue.signing_algs;
+    END IF;
+
+    IF TG_NARGS >= 9 THEN
+        _signing_enc := TG_ARGV[8]::pgqueue.signing_encs;
+    END IF;
+
     -- Build the payload based on the trigger event
     IF TG_OP = 'INSERT' THEN
         _payload := jsonb_build_object(
