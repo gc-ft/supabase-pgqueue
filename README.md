@@ -1,9 +1,11 @@
 
-# PGQueue: PostgreSQL-Based Job Queue and Webhook System for Supabase
+# PGQueue v2: PostgreSQL-Based Job Queue and Webhook System for Supabase
 
 **PGQueue** is a sophisticated job queue and webhook processing system built on top of PostgreSQL. It was built specifically with Supabase in mind and enables efficient scheduling, execution, and management of asynchronous jobs directly within the database. PGQueue supports running internal PostgreSQL functions, making HTTP requests, handling retries, managing authorization with JWTs, and signing requests with HMAC, all while providing robust logging and error handling mechanisms.
 
 It can be used to replace `supabase_functions.http_request()` for webhooks, offering a more robust, and feature rich implementation.
+
+Version 2 adds POLL jobs, which can be read and acknowledged via extra secured Functions.
 
 ## Copyright
    Copyright 2024 Fabian Thylmann
@@ -38,6 +40,7 @@ The idea behind PGQueue comes from [supa_queue](https://github.com/mansueli/supa
    - [Job Lifecycle](#job-lifecycle)
    - [Request Signing](#request-signing)
    - [Webhook Integration](#webhook-integration)
+   - [POLL Jobs](#poll-jobs)
 5. [Job Status and Error Handling](#job-status-and-error-handling)
 6. [Examples](#examples)
 7. [Contributing](#contributing)
@@ -54,6 +57,7 @@ The idea behind PGQueue comes from [supa_queue](https://github.com/mansueli/supa
 - **Webhook Triggers**: Easily create webhook triggers for database events using the `pgqueue.trigger_webhook` function.
 - **Comprehensive Error Handling**: Automatic retries for failed jobs, detailed logging of responses, and flexible handling of various HTTP status codes.
 - **Logging and Auditing**: Keep track of job execution, including detailed logs of failed attempts for troubleshooting and auditing purposes.
+- **POLL Jobs**: Create jobs that are not ran per cron but instead can be polled via a function.
 
 ## Installation
 
@@ -255,6 +259,47 @@ EXECUTE FUNCTION pgqueue.trigger_webhook(
 ```
 
 In this example, whenever a row is updated in `my_table`, a webhook is sent to the Supabase Edge Function called `my_edge_function`. Since no `_jwt` is provided, PGQueue will get the `service_role` key from Supabase Vault and use that key in the `Authorization` header. No HMAC Signature is generated for the request.
+
+### POLL Jobs
+
+Version 2 of PGQueue adds `POLL` job type. When a job is created with this type the functions run in cron do not execute the job. Also, no url is needed for these job types. Instead you can create workers which call the `public.pgqueue_poll_job` function to get the most urgent job off the queue. `public.pgqueue_poll_job` can either automatically acknowledge the job returned or your worker can call `public.pgqueue_poll_job_ack` to acknowledge that it has handled the job successfully. If a job is not acknowledged within 60 seconds, it is put back on the queue!
+
+This feature creates functions in the public schema, so they can be used through the Supabase REST API. These functions are `SECURITY DEFINER` functions, in order to interact with the `pgqueue` tables as required. Note that the functions are secured through HMAC signatures as explained below, so misuse is unlikely if you keep your secrets safe!
+
+#### `public.pgqueue_poll_job`
+
+`pgqueue_poll_job` pulls the first available job marked with poll from the queue. It takes 5 parameters:
+
+- **_job_owner**: Matches with the `job_owner` field in `pgqueue.job_queue`. `POLL` jobs should have a job_owner set since it aids in security.
+
+- **_timestamp**: A unix epoch timestamp which marks when this request's hmac was formed. This should be set to the current time. If the timestamp is more 2 seconds old, the request will be denied. This allows for hmac signatures not being reusable by anyone.
+
+- **_hmac**: A hmac signature using the job's `signing_secret` or `signing_vault` based secret used to sign the following string: `<job_owner><timestamp><auth.uid()>POLL` where `<timestamp>` is the `_timestamp` the function is called with and `<auth.uid()>` is whatever is returned by `auth.uid()` if `_user` is set to TRUE.
+
+- **_user** (default: FALSE): If set to true the result of `auth.uid()` is added in the string signed for the hmac. This only makes sense if you call the function as an authenticated user, to additionally secure the hmac check.
+
+- **_auto_ack** (default: FALSE): A boolean field defining if the job should be immediately acknowledged without waiting for a corresponding `pgqueue_poll_job_ack` call.
+
+The function returns a JSON string in the following format:
+
+```
+{
+    "id": job_queue.id,
+    "payload": job_queue.payload,
+    "headers": job_queue.headers
+}
+```
+
+
+#### `public.pgqueue_poll_job_ack`
+
+`pgqueue_poll_job_ack` acklowledges that the job was handled correctly. It only takes 2 parameters:
+
+- **_job_id**: The ID of the job that is being acknowledged. Get it from the `id` field in the JSON returned by `pgqueue_poll_job`.
+
+- **_hmac**: A hmac signature using the job's `signing_secret` or `signing_vault` based secret used to sign the following string: `<_job_id>ACK`. Since a job can only be acknowledged once, no extra fields are added to the string to further secure it since each request will require a different hmac always.
+
+The function returns `TRUE` if acknowledgement was successful and `FALSE` if it was not. Possible reasons for `FALSE` are the id or hmac being wrong.
 
 
 ### Job Status and Error Handling
