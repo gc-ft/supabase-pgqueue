@@ -77,13 +77,14 @@ The idea behind PGQueue comes from [supa_queue](https://github.com/mansueli/supa
 
 2. Run the SQL setup script present in the migrations directory to create the necessary database schema, types, and functions:
 
-   ```sql
+   ```
    psql -d your_database -f ./migrations/pgqueue-v1.sql
+   psql -d your_database -f ./migrations/pgqueue-v1-to-v2.sql
    ```
 
-    Or paste it into the SQL Editor and Run it.
+    Or paste first v1 and then v1-to-v2 into the SQL Editor and Run it.
 
-3. To add cron entries that run the needed functions use the below SQL in the SQL Editor:
+3. To add cron entries that run the needed functions use the below SQL in the SQL Editor (either first and second or first and third option below):
 
     ```sql
     -- Look for scheduled jobs each minute
@@ -92,11 +93,19 @@ The idea behind PGQueue comes from [supa_queue](https://github.com/mansueli/supa
         '* * * * *',
         $$ SELECT pgqueue.process_scheduled_jobs(); $$
     );
+
     -- Process job results 3 times per minute:
     SELECT cron.schedule(
         'pgqueue.process_job_results_subminute',
         '* * * * *',
         $$ SELECT pgqueue.process_job_results_subminute(); $$
+    );
+
+    -- Or if you want more processing use below for 6 times a minute:
+    SELECT cron.schedule(
+        'pgqueue.process_job_results_every_ten',
+        '* * * * *',
+        $$ SELECT pgqueue.process_job_results_every_ten(); $$
     );
     ```
 
