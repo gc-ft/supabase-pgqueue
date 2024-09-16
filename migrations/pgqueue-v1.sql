@@ -293,7 +293,12 @@ BEGIN
                     run_at = now() + (_retry_after_seconds || ' seconds')::interval
                 WHERE job_id = _executed_request.job_id;
         ELSIF _response_result.status = 'SUCCESS' 
-            AND _response_result.status_code BETWEEN 400 AND 499 THEN
+            AND (
+                _response_result.status_code BETWEEN 400 AND 499
+                OR _response_result.status_code = 503 -- supabase boot error
+                OR _response_result.status_code = 504 -- supabase invocation time limit
+                OR _response_result.status_code = 546 -- supabase resource limit
+            ) THEN
             -- General error codes, we retry, unless x-job-finished header
             -- is present in reply. Either way we store latest data
             RAISE NOTICE 'Job returned error % (job_id: %)', _response_result.status_code, _executed_request.job_id;
