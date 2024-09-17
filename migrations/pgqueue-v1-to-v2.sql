@@ -88,7 +88,7 @@ BEGIN
         UPDATE pgqueue.job_queue
         SET job_status = 'completed', last_at = now()
         WHERE id = _job.id;
-    ELSE THEN
+    ELSE
         UPDATE pgqueue.job_queue
         SET
             job_status = 'polled', 
@@ -216,7 +216,7 @@ BEGIN
                 response_content = _result,
                 response_status = 200 -- Assuming success
             WHERE job_id = _r.job_id;
-        ELSE IF _r.job_type = 'POLL' THEN
+        ELSIF _r.job_type = 'POLL' THEN
             -- means this poll job was not acknowledged in time
             -- log the failure and mark as new again so it can
             -- be picked up by the next poll
