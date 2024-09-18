@@ -3,6 +3,8 @@
 
 **PGQueue is currently still in BETA!**
 
+**PGQueue is neither endorsed by nor in any way associated with Supabase!**
+
 **PGQueue** is a sophisticated job queue and webhook processing system built on top of PostgreSQL. It was built specifically with Supabase in mind and enables efficient scheduling, execution, and management of asynchronous jobs directly within the database. PGQueue supports running internal PostgreSQL functions, making HTTP requests, handling retries, managing authorization with JWTs, and signing requests with HMAC, all while providing robust logging and error handling mechanisms.
 
 It can be used to replace `supabase_functions.http_request()` for webhooks, offering a more robust, and feature rich implementation.
