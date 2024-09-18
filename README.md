@@ -347,6 +347,8 @@ PGQueue is designed to handle errors gracefully and to automatically retry jobs 
 
 - **4xx Status Codes**: If the job receives a 4xx status code (e.g., 400 Bad Request, 404 Not Found), it will typically be retried unless the response includes an `x-job-finished` header. If the `x-job-finished` header is present, the job is marked as `completed`, even though the status code indicates a client error.
 
+- **503 504 546 Status Codes**: These error codes are handled like 4xx codes because Supabase uses these to signal a resource limit or boot issue for an Edge Function, which should be recoverable and especially 504 and 546 likely require a recall of the job.
+
 - **5xx Status Codes**: Jobs that receive a 500-level status code are marked as `server_error` and will not be retried. This indicates a server-side issue that is not expected to be resolved by retrying the job.
 
 - **Exponential Backoff for Retries**: PGQueue uses an exponential backoff strategy for retrying failed jobs. This means that the wait time between retries increases exponentially, helping to avoid overwhelming the target system and providing more time for transient issues to resolve.
